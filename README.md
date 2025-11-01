@@ -2,6 +2,9 @@
 
 Format LinkedIn posts with rich text formatting using Unicode symbols.
 
+<img width="743" height="593" alt="image" src="https://github.com/user-attachments/assets/56e2b49e-b6a3-46b1-a530-40e5c40eec20" />
+
+
 ## Quick Installation
 
 ### Chrome (Easiest)
