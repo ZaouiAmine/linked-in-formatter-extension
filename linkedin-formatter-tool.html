@@ -1,0 +1,658 @@
+<title>Post Formatter</title>
+<style>
+  :root {
+    --paper: #f6f2ea;
+    --surface: #ffffff;
+    --ink: #1c1a17;
+    --muted: #726c5e;
+    --accent: #2451ff;
+    --accent-ink: #0d2e99;
+    --accent-soft: #e8edff;
+    --border: #e6e0d2;
+    --danger: #b3441f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #16140f;
+      --surface: #1e1b15;
+      --ink: #f3efe6;
+      --muted: #a39c89;
+      --accent: #6c8cff;
+      --accent-ink: #cdd8ff;
+      --accent-soft: #232a4a;
+      --border: #332e24;
+      --danger: #e08a63;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #16140f;
+    --surface: #1e1b15;
+    --ink: #f3efe6;
+    --muted: #a39c89;
+    --accent: #6c8cff;
+    --accent-ink: #cdd8ff;
+    --accent-soft: #232a4a;
+    --border: #332e24;
+    --danger: #e08a63;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: 56px 20px 80px;
+  }
+
+  .page {
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .workspace { grid-template-columns: 1fr; }
+  }
+
+  header {
+    margin-bottom: 32px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: clamp(32px, 5vw, 44px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+  header p {
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(20, 16, 8, 0.04);
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .toolbar .divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    margin: 0 6px;
+    flex-shrink: 0;
+  }
+  .toolbar button {
+    all: unset;
+    box-sizing: border-box;
+    min-width: 34px;
+    height: 34px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--ink);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .toolbar button:hover { background: var(--accent-soft); }
+  .toolbar button:active { transform: translateY(1px); }
+  .toolbar button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .toolbar button.clear {
+    margin-left: auto;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  #editor {
+    min-height: 220px;
+    padding: 24px 24px 16px;
+    font-size: 17px;
+    line-height: 1.7;
+    outline: none;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  #editor:empty::before {
+    content: attr(data-placeholder);
+    color: var(--muted);
+  }
+
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 24px 18px;
+  }
+  .counter {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .counter.over { color: var(--danger); }
+  .bar-track {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--accent-soft);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.15s ease, background 0.15s ease;
+  }
+  .bar-fill.over { background: var(--danger); }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 24px 22px;
+  }
+  .copy-btn {
+    all: unset;
+    box-sizing: border-box;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 14.5px;
+    padding: 11px 20px;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { background: var(--accent-ink); }
+  .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .copy-feedback {
+    font-size: 13.5px;
+    color: var(--accent);
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .copy-feedback.show { opacity: 1; }
+
+  .preview-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    height: 34px;
+    margin: 0 0 10px;
+  }
+  .preview-heading h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .preview-heading span {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  .feed-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px 8px;
+    box-shadow: 0 1px 2px rgba(20, 16, 8, 0.04);
+  }
+  .feed-head {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .feed-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(160deg, var(--accent-soft), var(--border));
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .feed-avatar svg { width: 100%; height: 100%; display: block; }
+  .feed-id { flex: 1; min-width: 0; }
+  .feed-name {
+    all: unset;
+    display: block;
+    width: 100%;
+    font-weight: 700;
+    font-size: 14.5px;
+    color: var(--ink);
+    background: transparent;
+  }
+  .feed-headline {
+    all: unset;
+    display: block;
+    width: 100%;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 1px;
+    background: transparent;
+  }
+  .feed-meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .feed-body {
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--ink);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 168px;
+    overflow: hidden;
+    position: relative;
+  }
+  .feed-body.expanded { max-height: none; }
+  .feed-more {
+    all: unset;
+    display: inline-block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-weight: 700;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .feed-more:hover { color: var(--ink); }
+  .feed-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 14px 0 4px;
+  }
+  .feed-actions {
+    display: flex;
+    padding: 2px 0 10px;
+  }
+  .feed-actions button {
+    all: unset;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px 4px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--muted);
+    cursor: default;
+  }
+  .feed-actions svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+  .how {
+    margin-top: 28px;
+    padding: 18px 22px;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    font-size: 13.5px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .how strong { color: var(--ink); }
+  .how code {
+    font-family: "IBM Plex Mono", monospace;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  footer {
+    margin-top: 22px;
+    font-size: 12.5px;
+    color: var(--muted);
+    text-align: center;
+  }
+</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500..700&family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
+
+<div class="page">
+  <header>
+    <p class="eyebrow">Text tool</p>
+    <h1>Post Formatter</h1>
+    <p>Write here, select any words, and format them. LinkedIn has no rich‑text API — every "bold" letter you see anywhere on the platform is actually a different Unicode character that merely <em>looks</em> bold. This tool builds that substitution for you, then you copy the result straight into your post.</p>
+  </header>
+
+  <div class="workspace">
+   <div>
+    <div class="preview-heading">
+      <h2>Write</h2>
+      <span>select text to format it</span>
+    </div>
+    <div class="card">
+    <div class="toolbar" role="toolbar" aria-label="Formatting">
+      <button data-action="bold" title="Bold" style="font-weight:800;">B</button>
+      <button data-action="italic" title="Italic" style="font-style:italic;">I</button>
+      <button data-action="underline" title="Underline" style="text-decoration:underline;">U</button>
+      <button data-action="strikethrough" title="Strikethrough" style="text-decoration:line-through;">S</button>
+      <button data-action="monospace" title="Monospace" style="font-family:'IBM Plex Mono',monospace;font-size:12px;">&lt;/&gt;</button>
+      <div class="divider"></div>
+      <button data-action="bullet" title="Bullet list">• List</button>
+      <button data-action="number" title="Numbered list">1. List</button>
+      <div class="divider"></div>
+      <button data-action="hashtag" title="Add # to each word">#tag</button>
+      <button data-action="mention" title="Add @ mention">@name</button>
+      <button class="clear" data-action="clear" title="Remove all formatting">Clear</button>
+    </div>
+
+    <div id="editor" contenteditable="true" data-placeholder="Start typing your post, or select text below to try it out…"></div>
+
+    <div class="status-row">
+      <span class="counter" id="counter">0 / 3,000</span>
+      <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+    </div>
+
+    <div class="actions">
+      <button class="copy-btn" id="copyBtn">Copy formatted text</button>
+      <span class="copy-feedback" id="copyFeedback">Copied — paste it into LinkedIn</span>
+    </div>
+    </div>
+   </div>
+
+   <div>
+    <div class="preview-heading">
+      <h2>Preview</h2>
+      <span>updates as you type</span>
+    </div>
+
+    <div class="feed-card">
+    <div class="feed-head">
+      <div class="feed-avatar" aria-hidden="true">
+        <svg viewBox="0 0 48 48"><circle cx="24" cy="19" r="8" fill="var(--accent)" opacity="0.55"/><path d="M6 44c1.5-11 8-16 18-16s16.5 5 18 16Z" fill="var(--accent)" opacity="0.4"/></svg>
+      </div>
+      <div class="feed-id">
+        <input class="feed-name" id="feedName" value="Alex Rivera" aria-label="Your name" />
+        <input class="feed-headline" id="feedHeadline" value="Product Manager at Vantage Labs" aria-label="Your headline" />
+        <div class="feed-meta">2h · <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z"/></svg></div>
+      </div>
+    </div>
+    <div class="feed-body" id="feedBody"></div>
+    <button class="feed-more" id="feedMore" hidden>…more</button>
+    <div class="feed-divider"></div>
+    <div class="feed-actions">
+      <button><svg viewBox="0 0 24 24"><path d="M7 11v9H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3Zm0 0 4.5-8a2 2 0 0 1 3.8.9L14.5 9H19a2 2 0 0 1 2 2.3l-1.3 7A2 2 0 0 1 17.8 20H7"/></svg>Like</button>
+      <button><svg viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l2.4-3.8A8.5 8.5 0 1 1 21 11.5Z"/></svg>Comment</button>
+      <button><svg viewBox="0 0 24 24"><path d="M17 2 21 6l-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22 3 18l4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>Repost</button>
+      <button><svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/></svg>Send</button>
+    </div>
+    </div>
+   </div>
+  </div>
+
+  <div class="how">
+    <strong>How this actually works.</strong> Select the word "growth" and click <strong>B</strong>: the plain letters <code>growth</code> (U+0067 U+0072…) become the Mathematical Bold Unicode letters <code>𝗴𝗿𝗼𝘄𝘁𝗵</code> (U+1D5F4…) — a different, pre‑bolded character for every letter. LinkedIn's editor just displays whatever characters you paste, so it renders as bold text with no formatting markup involved. This is also why bold Unicode text still looks bold in a text message, a tweet, or a plain‑text email — and why it can't be spell‑checked or read aloud correctly by screen readers, since assistive tech sees "𝗴𝗿𝗼𝘄𝘁𝗵" as unrelated symbols, not the word "growth".
+  </div>
+
+  <footer>Formatting is applied live in your browser — nothing you type here is sent anywhere.</footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const UNDERLINE_MARK = String.fromCharCode(0x0332);
+  const STRIKE_MARK = String.fromCharCode(0x0335);
+
+  const UnicodeFormatter = {
+    unicodeToNormal(char) {
+      const code = char.codePointAt(0);
+      if (code >= 0x1D400 && code <= 0x1D7FF) {
+        if (code >= 0x1D63C && code <= 0x1D655) return String.fromCharCode(65 + (code - 0x1D63C));
+        if (code >= 0x1D656 && code <= 0x1D66F) return String.fromCharCode(97 + (code - 0x1D656));
+        if (code >= 0x1D5D4 && code <= 0x1D5ED) return String.fromCharCode(65 + (code - 0x1D5D4));
+        if (code >= 0x1D5EE && code <= 0x1D607) return String.fromCharCode(97 + (code - 0x1D5EE));
+        if (code >= 0x1D608 && code <= 0x1D621) return String.fromCharCode(65 + (code - 0x1D608));
+        if (code >= 0x1D622 && code <= 0x1D63B) return String.fromCharCode(97 + (code - 0x1D622));
+        if (code >= 0x1D670 && code <= 0x1D689) return String.fromCharCode(65 + (code - 0x1D670));
+        if (code >= 0x1D68A && code <= 0x1D6A3) return String.fromCharCode(97 + (code - 0x1D68A));
+        if (code >= 0x1D7EC && code <= 0x1D7F5) return String.fromCharCode(48 + (code - 0x1D7EC));
+        if (code >= 0x1D7F6 && code <= 0x1D7FF) return String.fromCharCode(48 + (code - 0x1D7F6));
+      }
+      return char;
+    },
+    stripCombining(char) {
+      return char === UNDERLINE_MARK || char === STRIKE_MARK ? '' : char;
+    },
+    normalize(text) {
+      return Array.from(text).map((c) => this.stripCombining(this.unicodeToNormal(c))).join('');
+    },
+    isFormatted(text, style) {
+      if (!text) return false;
+      const code = text.codePointAt(0);
+      switch (style) {
+        case 'bold':
+          return (code >= 0x1D5D4 && code <= 0x1D5ED) || (code >= 0x1D5EE && code <= 0x1D607) ||
+                 (code >= 0x1D63C && code <= 0x1D66F) || (code >= 0x1D7EC && code <= 0x1D7F5);
+        case 'italic':
+          return (code >= 0x1D608 && code <= 0x1D621) || (code >= 0x1D622 && code <= 0x1D63B) ||
+                 (code >= 0x1D63C && code <= 0x1D66F);
+        case 'underline': return text.includes(UNDERLINE_MARK);
+        case 'strikethrough': return text.includes(STRIKE_MARK);
+        case 'monospace':
+          return (code >= 0x1D670 && code <= 0x1D689) || (code >= 0x1D68A && code <= 0x1D6A3) ||
+                 (code >= 0x1D7F6 && code <= 0x1D7FF);
+        default: return false;
+      }
+    },
+    toggleMap(text, style, map) {
+      const already = this.isFormatted(text, style);
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized).map((c) => map(c) || c).join('');
+    },
+    toBold(text) {
+      return this.toggleMap(text, 'bold', (c) => {
+        const code = c.charCodeAt(0);
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97));
+        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48));
+        return null;
+      });
+    },
+    toItalic(text) {
+      return this.toggleMap(text, 'italic', (c) => {
+        const code = c.charCodeAt(0);
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D608 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D622 + (code - 97));
+        return null;
+      });
+    },
+    toMonospace(text) {
+      return this.toggleMap(text, 'monospace', (c) => {
+        const code = c.charCodeAt(0);
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D670 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D68A + (code - 97));
+        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7F6 + (code - 48));
+        return null;
+      });
+    },
+    toUnderline(text) {
+      const already = this.isFormatted(text, 'underline');
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized).map((c) => c + UNDERLINE_MARK).join('');
+    },
+    toStrikethrough(text) {
+      const already = this.isFormatted(text, 'strikethrough');
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized).map((c) => c + STRIKE_MARK).join('');
+    },
+    toBulletList(text) {
+      return text.split('\n').map((l) => (l.trim() ? '• ' + l.trim() : l)).join('\n');
+    },
+    toNumberedList(text) {
+      let n = 0;
+      return text.split('\n').map((l) => {
+        if (!l.trim()) return l;
+        n += 1;
+        return `${n}. ${l.trim()}`;
+      }).join('\n');
+    },
+    toHashtag(text) {
+      return text.trim().split(/\s+/).map((w) => (w.startsWith('#') ? w : '#' + w)).join(' ');
+    },
+    toMention(text) {
+      const t = text.trim();
+      return t.startsWith('@') ? t : '@' + t;
+    },
+  };
+
+  const ACTIONS = {
+    bold: (t) => UnicodeFormatter.toBold(t),
+    italic: (t) => UnicodeFormatter.toItalic(t),
+    underline: (t) => UnicodeFormatter.toUnderline(t),
+    strikethrough: (t) => UnicodeFormatter.toStrikethrough(t),
+    monospace: (t) => UnicodeFormatter.toMonospace(t),
+    bullet: (t) => UnicodeFormatter.toBulletList(t),
+    number: (t) => UnicodeFormatter.toNumberedList(t),
+    hashtag: (t) => UnicodeFormatter.toHashtag(t),
+    mention: (t) => UnicodeFormatter.toMention(t),
+    clear: (t) => UnicodeFormatter.normalize(t),
+  };
+
+  const editor = document.getElementById('editor');
+  const counter = document.getElementById('counter');
+  const bar = document.getElementById('bar');
+  const copyBtn = document.getElementById('copyBtn');
+  const copyFeedback = document.getElementById('copyFeedback');
+  const LIMIT = 3000;
+
+  const feedBody = document.getElementById('feedBody');
+  const feedMore = document.getElementById('feedMore');
+
+  editor.textContent = 'Excited to share that our team just shipped a feature that cut onboarding time in half.\n\nHere is what we learned along the way:\n\nFocus on the first five minutes\nCut every unnecessary click\nMeasure, then measure again';
+
+  function updateCounter() {
+    const len = editor.textContent.length;
+    counter.textContent = `${len.toLocaleString()} / ${LIMIT.toLocaleString()}`;
+    counter.classList.toggle('over', len > LIMIT);
+    const pct = Math.min(100, (len / LIMIT) * 100);
+    bar.style.width = pct + '%';
+    bar.classList.toggle('over', len > LIMIT);
+  }
+
+  function updatePreview() {
+    feedBody.textContent = editor.textContent;
+    feedBody.classList.remove('expanded');
+    // Let layout settle, then check if the real LinkedIn-style "…more" clamp is needed.
+    requestAnimationFrame(() => {
+      const isClamped = feedBody.scrollHeight > feedBody.clientHeight + 2;
+      feedMore.hidden = !isClamped;
+    });
+  }
+
+  feedMore.addEventListener('click', () => {
+    feedBody.classList.add('expanded');
+    feedMore.hidden = true;
+  });
+
+  function applyFormat(action) {
+    const transform = ACTIONS[action];
+    if (!transform) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+
+    let range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    if (sel.isCollapsed || !sel.toString()) {
+      // Nothing selected: apply to the whole note.
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    const original = sel.toString();
+    if (!original) return;
+    const formatted = transform(original);
+
+    const ok = document.execCommand && document.execCommand('insertText', false, formatted);
+    if (!ok) {
+      range.deleteContents();
+      range.insertNode(document.createTextNode(formatted));
+    }
+    updateCounter();
+    updatePreview();
+  }
+
+  document.querySelector('.toolbar').addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) e.preventDefault();
+  });
+
+  document.querySelector('.toolbar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    applyFormat(btn.dataset.action);
+    editor.focus();
+  });
+
+  editor.addEventListener('input', () => {
+    updateCounter();
+    updatePreview();
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(editor.textContent);
+    } catch (err) {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('copy');
+    }
+    copyFeedback.classList.add('show');
+    clearTimeout(copyBtn._t);
+    copyBtn._t = setTimeout(() => copyFeedback.classList.remove('show'), 2200);
+  });
+
+  updateCounter();
+  updatePreview();
+})();
+</script>

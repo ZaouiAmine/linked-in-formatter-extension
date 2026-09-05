@@ -1,612 +1,748 @@
-// LinkedIn Post Formatter
-(function() {
+// LinkedIn Post Formatter — a Medium/Notion-style floating panel that
+// appears synchronously when you select text (mouseup / shift+arrow),
+// so there is no async gap for LinkedIn's Quill-based editor to clear
+// the selection before we act on it.
+(function () {
   'use strict';
 
-  // Inject CSS styles
-  const style = document.createElement('style');
-  style.textContent = `
-    #linkedin-formatter-toolbar {
-      display: flex !important;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      background: #ffffff !important;
-      border-bottom: 1px solid #e0e0e0;
-      flex-wrap: wrap;
-      z-index: 9999 !important;
-      position: sticky !important;
-      top: 0 !important;
-      margin: 0 !important;
-      width: 100%;
-      box-sizing: border-box;
-      visibility: visible !important;
-      opacity: 1 !important;
-    }
-    #linkedin-formatter-toolbar .fmt-btn {
-      width: 36px;
-      height: 36px;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.2s;
-      color: #666;
-      font-size: 16px;
-    }
-    #linkedin-formatter-toolbar .fmt-btn:hover {
-      background: #f3f2ef !important;
-    }
-    #linkedin-formatter-toolbar .fmt-btn:active {
-      background: #e9ecef !important;
-      transform: scale(0.95);
-    }
-    #linkedin-formatter-counter {
-      font-size: 12px;
-      color: #666;
-      padding: 0 8px;
-      font-weight: 500;
-    }
-    #linkedin-formatter-counter.over-limit {
-      color: #d32f2f;
-      font-weight: 700;
-    }
-    .artdeco-modal__content #linkedin-formatter-toolbar,
-    .share-box #linkedin-formatter-toolbar {
-      position: relative !important;
-      display: flex !important;
-      visibility: visible !important;
-    }
-  `;
-  document.head.appendChild(style);
+  if (window.__linkedInFormatterInstalled) return;
+  window.__linkedInFormatterInstalled = true;
 
+  const UNDERLINE_MARK = String.fromCharCode(0x0332);
+  const STRIKE_MARK = String.fromCharCode(0x0335);
+
+  // ---------------------------------------------------------------------
+  // Unicode text transforms
+  // ---------------------------------------------------------------------
   const UnicodeFormatter = {
-    // Convert Unicode back to normal letter for processing
     unicodeToNormal(char) {
       const code = char.codePointAt(0);
-      // Detect various Unicode ranges and convert to normal
-      if (code >= 0x1D400 && code <= 0x1D7FF) { // Mathematical Unicode blocks
-        // Bold Italic Upper (0x1D63C-0x1D655)
-        if (code >= 0x1D63C && code <= 0x1D655) return String.fromCharCode(65 + (code - 0x1D63C));
-        // Bold Italic Lower (0x1D656-0x1D66F)
-        if (code >= 0x1D656 && code <= 0x1D66F) return String.fromCharCode(97 + (code - 0x1D656));
-        // Bold Upper (0x1D5D4-0x1D5ED)
-        if (code >= 0x1D5D4 && code <= 0x1D5ED) return String.fromCharCode(65 + (code - 0x1D5D4));
-        // Bold Lower (0x1D5EE-0x1D607)
-        if (code >= 0x1D5EE && code <= 0x1D607) return String.fromCharCode(97 + (code - 0x1D5EE));
-        // Italic Upper (0x1D608-0x1D621)
-        if (code >= 0x1D608 && code <= 0x1D621) return String.fromCharCode(65 + (code - 0x1D608));
-        // Italic Lower (0x1D622-0x1D63B)
-        if (code >= 0x1D622 && code <= 0x1D63B) return String.fromCharCode(97 + (code - 0x1D622));
-        // Monospace Upper (0x1D670-0x1D689)
-        if (code >= 0x1D670 && code <= 0x1D689) return String.fromCharCode(65 + (code - 0x1D670));
-        // Monospace Lower (0x1D68A-0x1D6A3)
-        if (code >= 0x1D68A && code <= 0x1D6A3) return String.fromCharCode(97 + (code - 0x1D68A));
+      if (code >= 0x1D400 && code <= 0x1D7FF) {
+        if (code >= 0x1D63C && code <= 0x1D655) return String.fromCharCode(65 + (code - 0x1D63C)); // bold italic upper
+        if (code >= 0x1D656 && code <= 0x1D66F) return String.fromCharCode(97 + (code - 0x1D656)); // bold italic lower
+        if (code >= 0x1D5D4 && code <= 0x1D5ED) return String.fromCharCode(65 + (code - 0x1D5D4)); // bold upper
+        if (code >= 0x1D5EE && code <= 0x1D607) return String.fromCharCode(97 + (code - 0x1D5EE)); // bold lower
+        if (code >= 0x1D608 && code <= 0x1D621) return String.fromCharCode(65 + (code - 0x1D608)); // italic upper
+        if (code >= 0x1D622 && code <= 0x1D63B) return String.fromCharCode(97 + (code - 0x1D622)); // italic lower
+        if (code >= 0x1D670 && code <= 0x1D689) return String.fromCharCode(65 + (code - 0x1D670)); // mono upper
+        if (code >= 0x1D68A && code <= 0x1D6A3) return String.fromCharCode(97 + (code - 0x1D68A)); // mono lower
+        if (code >= 0x1D7EC && code <= 0x1D7F5) return String.fromCharCode(48 + (code - 0x1D7EC)); // bold digits
+        if (code >= 0x1D7F6 && code <= 0x1D7FF) return String.fromCharCode(48 + (code - 0x1D7F6)); // mono digits
       }
       return char;
     },
-    
-    // Check if text is already formatted in a specific style
+
+    stripCombining(char) {
+      return char === UNDERLINE_MARK || char === STRIKE_MARK ? '' : char;
+    },
+
+    normalize(text) {
+      return Array.from(text)
+        .map((char) => this.stripCombining(this.unicodeToNormal(char)))
+        .join('');
+    },
+
     isFormatted(text, style) {
-      if (!text || text.length === 0) return false;
+      if (!text) return false;
       const code = text.codePointAt(0);
-      
-      switch(style) {
+      switch (style) {
         case 'bold':
-          return (code >= 0x1D5D4 && code <= 0x1D5ED) || // Bold Upper
-                 (code >= 0x1D5EE && code <= 0x1D607) || // Bold Lower
-                 (code >= 0x1D63C && code <= 0x1D66F);  // Bold Italic
+          return (
+            (code >= 0x1D5D4 && code <= 0x1D5ED) ||
+            (code >= 0x1D5EE && code <= 0x1D607) ||
+            (code >= 0x1D63C && code <= 0x1D66F) ||
+            (code >= 0x1D7EC && code <= 0x1D7F5)
+          );
         case 'italic':
-          return (code >= 0x1D608 && code <= 0x1D621) || // Italic Upper
-                 (code >= 0x1D622 && code <= 0x1D63B) || // Italic Lower
-                 (code >= 0x1D63C && code <= 0x1D66F);  // Bold Italic
+          return (
+            (code >= 0x1D608 && code <= 0x1D621) ||
+            (code >= 0x1D622 && code <= 0x1D63B) ||
+            (code >= 0x1D63C && code <= 0x1D66F)
+          );
         case 'underline':
-          return text.includes('\u0332');
+          return text.includes(UNDERLINE_MARK);
         case 'strikethrough':
-          return text.includes('\u0335');
+          return text.includes(STRIKE_MARK);
         case 'monospace':
-          return (code >= 0x1D670 && code <= 0x1D689) || // Monospace Upper
-                 (code >= 0x1D68A && code <= 0x1D6A3);   // Monospace Lower
+          return (
+            (code >= 0x1D670 && code <= 0x1D689) ||
+            (code >= 0x1D68A && code <= 0x1D6A3) ||
+            (code >= 0x1D7F6 && code <= 0x1D7FF)
+          );
         default:
           return false;
       }
     },
-    
-    // Convert text to bold - ALWAYS normalize first then toggle
+
+    toggleMap(text, style, map) {
+      const already = this.isFormatted(text, style);
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized)
+        .map((char) => map(char) || char)
+        .join('');
+    },
+
     toBold(text) {
-      // Check if already bold before normalizing
-      const isAlreadyBold = this.isFormatted(text, 'bold');
-      
-      // Always normalize to ASCII first (removes all formatting)
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      
-      // If was already bold, return normalized (toggle off)
-      if (isAlreadyBold) {
-        return normalized;
-      }
-      
-      // Apply bold to normalized text (toggle on)
-      return normalized.split('').map(char => {
+      return this.toggleMap(text, 'bold', (char) => {
         const code = char.charCodeAt(0);
-        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65)); // A-Z
-        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97)); // a-z
-        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48)); // 0-9
-        return char;
-      }).join('');
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D5D4 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D5EE + (code - 97));
+        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7EC + (code - 48));
+        return null;
+      });
     },
-    
-    // Convert text to italic - ALWAYS normalize first then toggle
+
     toItalic(text) {
-      // Check if already italic before normalizing
-      const isAlreadyItalic = this.isFormatted(text, 'italic');
-      
-      // Always normalize to ASCII first (removes all formatting)
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      
-      // If was already italic, return normalized (toggle off)
-      if (isAlreadyItalic) {
-        return normalized;
-      }
-      
-      // Apply italic to normalized text (toggle on)
-      return normalized.split('').map(char => {
+      return this.toggleMap(text, 'italic', (char) => {
         const code = char.charCodeAt(0);
-        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D608 + (code - 65)); // A-Z
-        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D622 + (code - 97)); // a-z
-        return char;
-      }).join('');
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D608 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D622 + (code - 97));
+        return null;
+      });
     },
-    
-    // Convert text to bold italic - ALWAYS normalize first
-    toBoldItalic(text) {
-      // First normalize to ASCII
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      // Apply bold italic to normalized text
-      return normalized.split('').map(char => {
-        const code = char.charCodeAt(0);
-        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D63C + (code - 65)); // A-Z
-        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D656 + (code - 97)); // a-z
-        return char;
-      }).join('');
-    },
-    
-    toUnderline(text) {
-      // Check if already underlined before normalizing
-      const isAlreadyUnderlined = this.isFormatted(text, 'underline');
-      
-      // Always normalize to ASCII first (removes all formatting)
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      
-      // If was already underlined, return normalized (toggle off)
-      if (isAlreadyUnderlined) {
-        return normalized;
-      }
-      
-      // Apply underline to normalized text (toggle on)
-      return normalized.split('').map(char => char + '\u0332').join('');
-    },
-    
-    toStrikethrough(text) {
-      // Check if already strikethrough before normalizing
-      const isAlreadyStrikethrough = this.isFormatted(text, 'strikethrough');
-      
-      // Always normalize to ASCII first (removes all formatting)
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      
-      // If was already strikethrough, return normalized (toggle off)
-      if (isAlreadyStrikethrough) {
-        return normalized;
-      }
-      
-      // Apply strikethrough using combining long stroke overlay (better centering)
-      return normalized.split('').map(char => char + '\u0335').join('');
-    },
-    
+
     toMonospace(text) {
-      // Check if already monospace before normalizing
-      const isAlreadyMonospace = this.isFormatted(text, 'monospace');
-      
-      // Always normalize to ASCII first (removes all formatting)
-      const normalized = text.split('').map(char => this.unicodeToNormal(char)).join('');
-      
-      // If was already monospace, return normalized (toggle off)
-      if (isAlreadyMonospace) {
-        return normalized;
-      }
-      
-      // Apply monospace to normalized text (toggle on)
-      return normalized.split('').map(char => {
+      return this.toggleMap(text, 'monospace', (char) => {
         const code = char.charCodeAt(0);
-        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D670 + (code - 65)); // A-Z
-        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D68A + (code - 97)); // a-z
-        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7F6 + (code - 48)); // 0-9
-        return char;
-      }).join('');
-    }
+        if (code >= 65 && code <= 90) return String.fromCodePoint(0x1D670 + (code - 65));
+        if (code >= 97 && code <= 122) return String.fromCodePoint(0x1D68A + (code - 97));
+        if (code >= 48 && code <= 57) return String.fromCodePoint(0x1D7F6 + (code - 48));
+        return null;
+      });
+    },
+
+    toUnderline(text) {
+      const already = this.isFormatted(text, 'underline');
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized).map((char) => char + UNDERLINE_MARK).join('');
+    },
+
+    toStrikethrough(text) {
+      const already = this.isFormatted(text, 'strikethrough');
+      const normalized = this.normalize(text);
+      if (already) return normalized;
+      return Array.from(normalized).map((char) => char + STRIKE_MARK).join('');
+    },
+
+    toBulletList(text) {
+      return text
+        .split('\n')
+        .map((line) => (line.trim() ? '• ' + line.trim() : line))
+        .join('\n');
+    },
+
+    toNumberedList(text) {
+      let n = 0;
+      return text
+        .split('\n')
+        .map((line) => {
+          if (!line.trim()) return line;
+          n += 1;
+          return `${n}. ${line.trim()}`;
+        })
+        .join('\n');
+    },
+
+    toHashtag(text) {
+      return text
+        .trim()
+        .split(/\s+/)
+        .map((word) => (word.startsWith('#') ? word : '#' + word))
+        .join(' ');
+    },
+
+    toMention(text) {
+      const trimmed = text.trim();
+      return trimmed.startsWith('@') ? trimmed : '@' + trimmed;
+    },
   };
 
-  let currentEditor = null;
-  let toolbarElement = null;
-  let checkInterval = null;
-  let observer = null;
+  const ACTIONS = {
+    bold: (t) => UnicodeFormatter.toBold(t),
+    italic: (t) => UnicodeFormatter.toItalic(t),
+    underline: (t) => UnicodeFormatter.toUnderline(t),
+    strikethrough: (t) => UnicodeFormatter.toStrikethrough(t),
+    monospace: (t) => UnicodeFormatter.toMonospace(t),
+    bullet: (t) => UnicodeFormatter.toBulletList(t),
+    number: (t) => UnicodeFormatter.toNumberedList(t),
+    hashtag: (t) => UnicodeFormatter.toHashtag(t),
+    mention: (t) => UnicodeFormatter.toMention(t),
+  };
 
-  function findEditor() {
-    const selectors = [
-      '.share-box .ql-editor[contenteditable="true"]',
-      '.share-box [contenteditable="true"]',
-      '.share-box textarea',
-      '.ql-editor[contenteditable="true"]',
-      '[contenteditable="true"][data-placeholder*="What" i]',
-      '[contenteditable="true"][data-placeholder*="post" i]',
-      'textarea[placeholder*="What" i]',
-      'textarea[placeholder*="post" i]',
-      '.ql-editor',
-      '[contenteditable="true"]'
-    ];
+  // ---------------------------------------------------------------------
+  // Applying a format to a captured selection
+  // ---------------------------------------------------------------------
+  function isTextField(el) {
+    if (!el) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    if (el.tagName === 'INPUT' && /^(text|search)$/i.test(el.type || 'text')) return true;
+    return false;
+  }
 
-    for (const selector of selectors) {
-      const elements = document.querySelectorAll(selector);
-      for (const el of elements) {
-        const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
-        
-        if (rect.width > 0 && rect.height > 0 && 
-            style.display !== 'none' && 
-            style.visibility !== 'hidden' &&
-            style.opacity !== '0') {
-          
-          const inShareBox = el.closest('.share-box') !== null;
-          const hasPlaceholder = el.getAttribute('data-placeholder') || el.getAttribute('placeholder') || '';
-          
-          if (inShareBox || hasPlaceholder.toLowerCase().includes('what') || hasPlaceholder.toLowerCase().includes('post')) {
-            return el;
-          }
-        }
-      }
+  // LinkedIn's post/comment editor lives inside an *open* Shadow DOM
+  // (data-testid="interop-shadowdom"). document.getSelection() does not
+  // reflect what's actually selected in there — it returns a stale,
+  // unrelated, collapsed range. Each ShadowRoot has its own getSelection(),
+  // so we have to walk down through document.activeElement's shadow chain
+  // to find the selection that is actually live.
+  function getDeepSelectionContext() {
+    let root = document;
+    let active = document.activeElement;
+    while (active && active.shadowRoot) {
+      root = active.shadowRoot;
+      active = root.activeElement;
     }
-    
+    const sel = typeof root.getSelection === 'function' ? root.getSelection() : window.getSelection();
+    return { active, sel };
+  }
+
+  const nativeTextareaSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    'value'
+  ).set;
+  const nativeInputSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    'value'
+  ).set;
+
+  function setNativeValue(el, value) {
+    const setter = el.tagName === 'TEXTAREA' ? nativeTextareaSetter : nativeInputSetter;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // LinkedIn's post/comment editor is Quill, which keeps its own internal
+  // "Delta" model — the DOM is just a render of it. Splicing the DOM
+  // directly (or via execCommand, which is DOM splicing under the hood)
+  // can desync from that model and get silently discarded or corrupted on
+  // the next re-render. The reliable fix is to drive the real Quill
+  // instance's API instead, which updates model and DOM together.
+  function findReactFiberKey(node) {
+    return Object.keys(node).find(
+      (key) => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$')
+    );
+  }
+
+  function findQuillViaFiber(node) {
+    const fiberKey = findReactFiberKey(node);
+    if (!fiberKey) return null;
+    let fiber = node[fiberKey];
+    for (let i = 0; i < 40 && fiber; i += 1) {
+      const props = fiber.memoizedProps;
+      if (looksLikeQuill(props && props.quill)) return props.quill;
+      const stateNode = fiber.stateNode;
+      if (looksLikeQuill(stateNode && stateNode.quill)) return stateNode.quill;
+      fiber = fiber.return;
+    }
     return null;
   }
 
-  function createToolbar() {
-    if (toolbarElement) return toolbarElement;
-    
-    const toolbar = document.createElement('div');
-    toolbar.id = 'linkedin-formatter-toolbar';
-    toolbar.style.cssText = `
-      display: flex !important;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      background: #ffffff !important;
-      border-bottom: 1px solid #e0e0e0;
-      flex-wrap: wrap;
-      z-index: 99999 !important;
-      position: sticky !important;
-      top: 0 !important;
-      margin: 0 !important;
-      width: 100%;
-      box-sizing: border-box;
-    `;
-
-    toolbar.innerHTML = `
-      <button data-action="bold" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-weight:bold;font-size:18px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" title="Bold">B</button>
-      <button data-action="italic" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-style:italic;font-size:18px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" title="Italic">I</button>
-      <button data-action="underline" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;text-decoration:underline;font-size:14px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:600;" title="Underline">U</button>
-      <button data-action="strikethrough" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;text-decoration:line-through;font-size:14px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:600;" title="Strikethrough">S</button>
-      <button data-action="monospace" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-family:monospace;font-size:14px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:600;" title="Monospace">M</button>
-      <div style="width:1px;height:24px;background:#e0e0e0;margin:0 8px;"></div>
-      <button data-action="bullet" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-size:20px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" title="Bullet List">•</button>
-      <button data-action="number" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-size:14px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:600;" title="Numbered List">1.</button>
-      <div style="width:1px;height:24px;background:#e0e0e0;margin:0 8px;"></div>
-      <button data-action="hashtag" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-size:18px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:700;" title="Hashtag">#</button>
-      <button data-action="mention" class="fmt-btn" style="width:40px;height:40px;border:none;background:transparent;cursor:pointer;border-radius:6px;font-size:16px;color:#666;display:flex;align-items:center;justify-content:center;transition:all 0.2s;font-weight:700;" title="Mention">@</button>
-      <div style="width:1px;height:24px;background:#e0e0e0;margin:0 8px;"></div>
-      <span id="linkedin-formatter-counter" style="font-size:12px;color:#666;padding:0 8px;font-weight:600;">0</span>
-    `;
-    
-    // Add hover effects
-    toolbar.querySelectorAll('.fmt-btn').forEach(btn => {
-      btn.addEventListener('mouseenter', () => {
-        btn.style.background = '#f3f2ef';
-        btn.style.color = '#000';
-      });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.background = 'transparent';
-        btn.style.color = '#666';
-      });
-      btn.addEventListener('mousedown', () => {
-        btn.style.background = '#e0e0e0';
-      });
-      btn.addEventListener('mouseup', () => {
-        btn.style.background = '#f3f2ef';
-      });
-    });
-
-    toolbar.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-action]');
-      if (btn && currentEditor) {
-        e.preventDefault();
-        e.stopPropagation();
-        const action = btn.getAttribute('data-action');
-        applyFormatSimple(action);
-      }
-    });
-
-    toolbarElement = toolbar;
-    return toolbar;
+  // Duck-type instead of trusting a specific property name: LinkedIn's own
+  // wiring (e.g. "__quill") is an implementation detail that could be
+  // renamed independently of Quill itself, so we look for the actual
+  // Quill instance shape (its real, documented API surface) rather than
+  // a magic string.
+  function looksLikeQuill(obj) {
+    return (
+      !!obj &&
+      typeof obj.getSelection === 'function' &&
+      typeof obj.getText === 'function' &&
+      typeof obj.deleteText === 'function' &&
+      typeof obj.insertText === 'function'
+    );
   }
 
-  // Direct approach: Delete selected text and insert formatted text
-  function applyFormatSimple(action) {
-    if (!currentEditor) {
+  function scanPropertiesForQuill(node) {
+    if (!node) return null;
+    if (looksLikeQuill(node.__quill)) return node.__quill;
+    for (const key of Object.getOwnPropertyNames(node)) {
+      if (!key.startsWith('__') && key !== 'quill') continue; // keep the scan cheap and targeted
+      try {
+        const value = node[key];
+        if (looksLikeQuill(value)) return value;
+      } catch (e) {
+        // Some properties throw on access (e.g. cross-origin); skip them.
+      }
+    }
+    return null;
+  }
+
+  function findQuillInstance(startNode) {
+    let el = startNode && startNode.nodeType === Node.ELEMENT_NODE ? startNode : startNode && startNode.parentElement;
+    let hops = 0;
+    while (el && hops < 8) {
+      // Quill's own default class names ("ql-editor"/"ql-container") are a
+      // strong signal when present, but we don't require them: any
+      // contenteditable ancestor is worth a duck-typed property scan, so
+      // this keeps working even if those class names ever change.
+      const isEditableHere = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
+      if (isEditableHere || (el.classList && el.classList.contains('ql-editor'))) {
+        const viaProps = scanPropertiesForQuill(el);
+        if (viaProps) return viaProps;
+        const container = el.closest('.ql-container') || el.parentElement;
+        const viaContainerProps = container && scanPropertiesForQuill(container);
+        if (viaContainerProps) return viaContainerProps;
+        const viaFiber = findQuillViaFiber(el) || (container && findQuillViaFiber(container));
+        if (viaFiber) return viaFiber;
+        if (el.classList && el.classList.contains('ql-editor')) return null; // confirmed Quill, just not reachable
+      }
+      el = el.parentElement;
+      hops += 1;
+    }
+    return null;
+  }
+
+  function applyViaQuill(quill, index, length, transform) {
+    const original = quill.getText(index, length);
+    const formatted = transform(original);
+    quill.deleteText(index, length, 'api');
+    quill.insertText(index, formatted, 'api');
+    quill.setSelection(index + formatted.length, 0, 'api');
+  }
+
+  function applyToContentEditable(captured, transform) {
+    if (captured.quill) {
+      applyViaQuill(captured.quill, captured.index, captured.length, transform);
       return;
     }
 
-    try {
-      const isTextarea = currentEditor.tagName === 'TEXTAREA';
-      
-      // Get selected text
-      let selectedText = '';
-      let start = 0;
-      let end = 0;
-      
-      if (isTextarea) {
-        start = currentEditor.selectionStart || 0;
-        end = currentEditor.selectionEnd || 0;
-        selectedText = currentEditor.value.substring(start, end);
-      } else {
-        const selection = window.getSelection();
-        if (selection && selection.rangeCount > 0) {
-          selectedText = selection.toString();
-          const range = selection.getRangeAt(0);
-          start = 0;
-          end = selectedText.length;
-        }
-      }
-      
-      if (!selectedText) {
-        showFeedback('Please select text first');
+    const range = captured.range;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const original = range.toString();
+    const formatted = transform(original);
+    if (!original && !formatted) return; // nothing selected and nothing to insert
+
+    const ok = document.execCommand && document.execCommand('insertText', false, formatted);
+    if (!ok) {
+      range.deleteContents();
+      range.insertNode(document.createTextNode(formatted));
+    }
+  }
+
+  function applyToInput(field, start, end, transform) {
+    const original = field.value.substring(start, end);
+    const formatted = transform(original);
+    const before = field.value.substring(0, start);
+    const after = field.value.substring(end);
+
+    field.focus();
+    field.setSelectionRange(start, end);
+    const ok = document.execCommand && document.execCommand('insertText', false, formatted);
+    if (!ok) {
+      setNativeValue(field, before + formatted + after);
+      const pos = start + formatted.length;
+      field.setSelectionRange(pos, pos);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Floating panel: one row of primary buttons + a "More" row underneath
+  // ---------------------------------------------------------------------
+  const style = document.createElement('style');
+  style.textContent = `
+    #lif-panel {
+      position: fixed;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: #1b1f23;
+      border-radius: 8px;
+      padding: 5px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      z-index: 2147483647;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(3px) scale(0.96);
+      transition: opacity 130ms ease, transform 130ms ease;
+      pointer-events: none;
+    }
+    #lif-panel.lif-open {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+    #lif-panel .lif-row {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    #lif-panel .lif-more-row,
+    #lif-panel .lif-symbols-row,
+    #lif-panel .lif-caret-chip {
+      display: none;
+    }
+    #lif-panel.lif-more-open .lif-more-row {
+      display: flex;
+    }
+    #lif-panel.lif-symbols-open .lif-symbols-row {
+      display: flex;
+    }
+    #lif-panel .lif-wrap {
+      flex-wrap: wrap;
+      max-width: 200px;
+    }
+    /* Caret mode (no text selected, just a resting cursor): start as a
+       single small chip, not the full grid, so pausing to think while
+       writing doesn't throw a wall of buttons at you. The chip expands
+       into the symbol grid on hover/click. */
+    #lif-panel.lif-caret-mode .lif-main-row,
+    #lif-panel.lif-caret-mode .lif-more-row,
+    #lif-panel.lif-caret-mode .lif-symbols-row {
+      display: none;
+    }
+    #lif-panel.lif-caret-mode .lif-caret-chip {
+      display: flex;
+    }
+    #lif-panel.lif-caret-mode.lif-caret-expanded .lif-caret-chip {
+      display: none;
+    }
+    #lif-panel.lif-caret-mode.lif-caret-expanded .lif-symbols-row {
+      display: flex;
+    }
+    #lif-panel button {
+      all: unset;
+      box-sizing: border-box;
+      min-width: 30px;
+      height: 30px;
+      padding: 0 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #f5f5f5;
+      font-size: 14px;
+      border-radius: 5px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #lif-panel button:hover { background: #383d42; }
+    #lif-panel button:active { background: #4a5157; }
+    #lif-panel .lif-sep {
+      width: 1px;
+      align-self: stretch;
+      background: #40454a;
+      margin: 4px 2px;
+      flex-shrink: 0;
+    }
+  `;
+  document.documentElement.appendChild(style);
+
+  const MAIN_BUTTONS = [
+    { action: 'bold', label: 'B', title: 'Bold', css: 'font-weight:bold;' },
+    { action: 'italic', label: 'I', title: 'Italic', css: 'font-style:italic;' },
+    { action: 'underline', label: 'U', title: 'Underline', css: 'text-decoration:underline;' },
+    { action: 'strikethrough', label: 'S', title: 'Strikethrough', css: 'text-decoration:line-through;' },
+  ];
+
+  const MORE_BUTTONS = [
+    { action: 'monospace', label: '</>', title: 'Monospace', css: 'font-family:monospace;font-size:11px;' },
+    { action: 'bullet', label: '•', title: 'Bullet list' },
+    { action: 'number', label: '1.', title: 'Numbered list', css: 'font-size:11px;' },
+    { action: 'hashtag', label: '#', title: 'Hashtag' },
+    { action: 'mention', label: '@', title: 'Mention' },
+  ];
+
+  // Common symbols people reach for while writing LinkedIn posts (flow
+  // arrows, callout pointers, checklist marks). Clicking one prefixes the
+  // selected line with it (toggling off again if already there), the same
+  // pattern as the bullet/numbered list buttons.
+  const SYMBOLS = ['→', '←', '↳', '⇒', '➤', '▶', '✅', '❌', '⭐', '💡', '🔥', '👉'];
+
+  function buildRow(buttons) {
+    const row = document.createElement('div');
+    row.className = 'lif-row';
+    buttons.forEach((b) => {
+      const btn = document.createElement('button');
+      btn.textContent = b.label;
+      btn.title = b.title;
+      btn.dataset.action = b.action;
+      if (b.css) btn.style.cssText = b.css;
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  function buildSymbolRow(symbols) {
+    const row = document.createElement('div');
+    row.className = 'lif-row lif-wrap';
+    symbols.forEach((symbol) => {
+      const btn = document.createElement('button');
+      btn.textContent = symbol;
+      btn.title = `Insert ${symbol}`;
+      btn.dataset.symbol = symbol;
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  const panel = document.createElement('div');
+  panel.id = 'lif-panel';
+
+  const mainRow = buildRow(MAIN_BUTTONS);
+  mainRow.classList.add('lif-main-row');
+  const sep = document.createElement('div');
+  sep.className = 'lif-sep';
+  mainRow.appendChild(sep);
+  const moreToggle = document.createElement('button');
+  moreToggle.textContent = 'More ▾';
+  moreToggle.dataset.action = '__more__';
+  mainRow.appendChild(moreToggle);
+  const symbolsToggle = document.createElement('button');
+  symbolsToggle.textContent = '→ ▾';
+  symbolsToggle.title = 'Symbols';
+  symbolsToggle.dataset.action = '__symbols__';
+  mainRow.appendChild(symbolsToggle);
+
+  const moreRow = buildRow(MORE_BUTTONS);
+  moreRow.classList.add('lif-more-row');
+
+  const symbolsRow = buildSymbolRow(SYMBOLS);
+  symbolsRow.classList.add('lif-symbols-row');
+
+  const caretChip = document.createElement('button');
+  caretChip.className = 'lif-caret-chip';
+  caretChip.textContent = '→';
+  caretChip.title = 'Insert a symbol';
+  caretChip.dataset.action = '__expand_caret__';
+
+  panel.appendChild(caretChip);
+  panel.appendChild(mainRow);
+  panel.appendChild(moreRow);
+  panel.appendChild(symbolsRow);
+  document.documentElement.appendChild(panel);
+
+  function expandCaretChip() {
+    if (!panel.classList.contains('lif-caret-mode') || panel.classList.contains('lif-caret-expanded')) return;
+    panel.classList.add('lif-caret-expanded');
+    // The panel just grew from a single chip to the full symbol grid —
+    // recenter it on the same anchor point instead of leaving it offset.
+    if (lastAnchorRect) positionNear(lastAnchorRect);
+  }
+  caretChip.addEventListener('mouseenter', expandCaretChip);
+
+  let savedContent = null;
+  let savedInputSel = null;
+  let lastAnchorRect = null;
+
+  function positionNear(rect) {
+    lastAnchorRect = rect;
+    panel.style.left = '0px';
+    panel.style.top = '0px';
+    panel.classList.add('lif-open');
+    const panelRect = panel.getBoundingClientRect();
+    let left = rect.left + rect.width / 2 - panelRect.width / 2;
+    let top = rect.top - panelRect.height - 8;
+    if (top < 8) top = rect.bottom + 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - panelRect.width - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - panelRect.height - 8));
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+  }
+
+  function closePanel() {
+    panel.classList.remove('lif-open', 'lif-more-open', 'lif-symbols-open', 'lif-caret-mode', 'lif-caret-expanded');
+    savedContent = null;
+    savedInputSel = null;
+    lastAnchorRect = null;
+  }
+
+  function applyTransform(transform) {
+    if (savedContent) {
+      applyToContentEditable(savedContent, transform);
+    } else if (savedInputSel) {
+      applyToInput(savedInputSel.el, savedInputSel.start, savedInputSel.end, transform);
+    }
+  }
+
+  function toggleSymbolPrefix(symbol, text) {
+    const prefix = symbol + ' ';
+    return text.startsWith(prefix) ? text.slice(prefix.length) : prefix + text;
+  }
+
+  function isEditableElement(el) {
+    return !!el && (el.isContentEditable || el.getAttribute('contenteditable') === 'true');
+  }
+
+  // Two ways this panel opens:
+  //  - a real, non-empty text selection -> full toolbar (format + symbols)
+  //  - just a resting caret (no selection) inside an editable field, after
+  //    a short pause -> a compact "insert a symbol here" popup, so getting
+  //    an arrow in doesn't require selecting a word first.
+  // Only offer the caret-mode popup at a natural word boundary (right after
+  // a space, a newline, or at the very start) — not mid-word. Pausing while
+  // typing a word is normal thinking time, not a request for a symbol.
+  function isWordBoundary(charBefore) {
+    return !charBefore || /\s/.test(charBefore);
+  }
+
+  function enterCaretMode() {
+    panel.classList.add('lif-caret-mode');
+    panel.classList.remove('lif-caret-expanded');
+  }
+
+  function handleSelectionChange() {
+    const { active, sel } = getDeepSelectionContext();
+
+    if (isTextField(active)) {
+      const start = active.selectionStart;
+      const end = active.selectionEnd;
+      if (start == null || end == null) {
+        closePanel();
         return;
       }
-      
-      // Apply formatting
-      let formatted = '';
-      switch(action) {
-        case 'bold': 
-          formatted = UnicodeFormatter.toBold(selectedText);
-          break;
-        case 'italic': 
-          formatted = UnicodeFormatter.toItalic(selectedText);
-          break;
-        case 'underline': 
-          formatted = UnicodeFormatter.toUnderline(selectedText);
-          break;
-        case 'strikethrough': 
-          formatted = UnicodeFormatter.toStrikethrough(selectedText);
-          break;
-        case 'monospace': 
-          formatted = UnicodeFormatter.toMonospace(selectedText);
-          break;
-        case 'bullet': 
-          formatted = selectedText.split('\n').map(line => 
-            line.trim() ? '• ' + line.trim() : ''
-          ).filter(Boolean).join('\n');
-          break;
-        case 'number': 
-          formatted = selectedText.split('\n').map((line, i) => 
-            line.trim() ? `${i + 1}. ${line.trim()}` : ''
-          ).filter(Boolean).join('\n');
-          break;
-        case 'hashtag': 
-          formatted = '#' + selectedText.trim();
-          break;
-        case 'mention': 
-          formatted = '@' + selectedText.trim();
-          break;
-        default: 
+      if (start === end) {
+        if (!isWordBoundary(active.value.charAt(start - 1))) {
+          closePanel();
           return;
-      }
-      
-      // Replace selected text with formatted text directly
-      if (isTextarea) {
-        const before = currentEditor.value.substring(0, start);
-        const after = currentEditor.value.substring(end);
-        currentEditor.value = before + formatted + after;
-        
-        // Position cursor after inserted text
-        const newPos = start + formatted.length;
-        currentEditor.setSelectionRange(newPos, newPos);
-        currentEditor.focus();
-        
-        // Trigger input event
-        currentEditor.dispatchEvent(new Event('input', { bubbles: true }));
-        currentEditor.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        enterCaretMode();
       } else {
-        // For contenteditable
-        currentEditor.focus();
-        const selection = window.getSelection();
-        
-        if (selection && selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0);
-          
-          // Delete selected content
-          range.deleteContents();
-          
-          // Insert formatted text
-          const textNode = document.createTextNode(formatted);
-          range.insertNode(textNode);
-          
-          // Position cursor after inserted text
-          range.setStartAfter(textNode);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          
-          // Trigger multiple input events to make sure LinkedIn notices
-          const events = ['input', 'change', 'keyup', 'keydown'];
-          events.forEach(eventType => {
-            currentEditor.dispatchEvent(new Event(eventType, { bubbles: true }));
-          });
-        }
+        panel.classList.remove('lif-caret-mode', 'lif-caret-expanded');
       }
-      
-      showFeedback('✓ Formatted!');
-    } catch (error) {
-      showFeedback('✗ Error');
-    }
-  }
-  
-  function showFeedback(message) {
-    if (!toolbarElement) return;
-    
-    let feedback = toolbarElement.querySelector('.feedback-msg');
-    if (!feedback) {
-      feedback = document.createElement('div');
-      feedback.className = 'feedback-msg';
-      feedback.style.cssText = `
-        font-size: 11px;
-        color: #0073b1;
-        font-weight: 600;
-        margin-left: 8px;
-      `;
-      toolbarElement.appendChild(feedback);
-    }
-    
-    feedback.textContent = message;
-    
-    setTimeout(() => {
-      feedback.textContent = '';
-    }, 3000);
-  }
-
-  function updateCounter() {
-    if (!currentEditor || !toolbarElement) return;
-    const counter = toolbarElement.querySelector('#linkedin-formatter-counter');
-    if (!counter) return;
-    
-    const text = currentEditor.tagName === 'TEXTAREA' 
-      ? currentEditor.value 
-      : (currentEditor.textContent || '');
-    counter.textContent = text.length;
-    counter.style.color = text.length > 3000 ? '#d32f2f' : '#666';
-  }
-
-  function injectToolbar() {
-    if (!currentEditor) return;
-    
-    const existing = document.getElementById('linkedin-formatter-toolbar');
-    if (existing && existing.isConnected && currentEditor.isConnected) {
-      toolbarElement = existing;
+      savedInputSel = { el: active, start, end };
+      savedContent = null;
+      positionNear(active.getBoundingClientRect());
       return;
     }
 
-    if (existing && !existing.isConnected) {
-      existing.remove();
-      toolbarElement = null;
+    if (!isEditableElement(active) || !sel || sel.rangeCount === 0) {
+      closePanel();
+      return;
     }
 
-    if (!toolbarElement) {
-      toolbarElement = createToolbar();
-    }
-    
-    let parent = null;
-    let insertBefore = null;
+    const range = sel.getRangeAt(0);
+    const isRealSelection = !sel.isCollapsed && !!sel.toString();
+    const quill = findQuillInstance(range.commonAncestorContainer);
 
-    const wrapper = currentEditor.closest('.share-creation-state__text-editor');
-    if (wrapper && wrapper.parentNode) {
-      parent = wrapper.parentNode;
-      insertBefore = wrapper;
+    if (quill) {
+      const quillRange = quill.getSelection();
+      if (!quillRange) {
+        closePanel();
+        return;
+      }
+      if (isRealSelection && quillRange.length === 0) {
+        closePanel();
+        return;
+      }
+      if (!isRealSelection) {
+        const charBefore = quillRange.index > 0 ? quill.getText(quillRange.index - 1, 1) : '';
+        if (!isWordBoundary(charBefore)) {
+          closePanel();
+          return;
+        }
+      }
+      savedContent = { quill, index: quillRange.index, length: quillRange.length };
     } else {
-      const container = currentEditor.closest('.editor-container');
-      if (container && container.parentNode) {
-        parent = container.parentNode;
-        insertBefore = container;
-      } else if (currentEditor.parentNode) {
-        parent = currentEditor.parentNode;
-        insertBefore = currentEditor;
-      }
+      savedContent = { range: range.cloneRange() };
     }
-
-    if (parent && insertBefore) {
-      try {
-        parent.insertBefore(toolbarElement, insertBefore);
-      } catch (e) {
-        if (parent.firstChild) {
-          parent.insertBefore(toolbarElement, parent.firstChild);
-        } else {
-          parent.appendChild(toolbarElement);
-        }
-      }
+    savedInputSel = null;
+    if (isRealSelection) {
+      panel.classList.remove('lif-caret-mode', 'lif-caret-expanded');
     } else {
+      enterCaretMode();
+    }
+    positionNear(range.getBoundingClientRect());
+  }
+
+  let idleTimer = null;
+  function scheduleIdleCheck() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(handleSelectionChange, 550);
+  }
+
+  panel.addEventListener('mousedown', (e) => {
+    // Keep the underlying selection intact until we've re-applied it ourselves.
+    e.preventDefault();
+  });
+
+  panel.addEventListener('click', (e) => {
+    const symbolBtn = e.target.closest('button[data-symbol]');
+    if (symbolBtn) {
+      const symbol = symbolBtn.dataset.symbol;
+      applyTransform((text) => toggleSymbolPrefix(symbol, text));
+      closePanel();
       return;
     }
 
-    currentEditor.addEventListener('input', updateCounter);
-    currentEditor.addEventListener('keyup', updateCounter);
-    updateCounter();
-  }
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
 
-  function checkAndInject() {
-    const editor = findEditor();
-
-    if (!editor) {
-      if (currentEditor) {
-        currentEditor = null;
-        if (toolbarElement && toolbarElement.parentNode) {
-          toolbarElement.remove();
-          toolbarElement = null;
-        }
-      }
+    if (action === '__more__') {
+      panel.classList.toggle('lif-more-open');
+      return;
+    }
+    if (action === '__symbols__') {
+      panel.classList.toggle('lif-symbols-open');
+      return;
+    }
+    if (action === '__expand_caret__') {
+      expandCaretChip();
       return;
     }
 
-    if (editor !== currentEditor) {
-      if (toolbarElement && toolbarElement.parentNode && currentEditor && !currentEditor.isConnected) {
-        toolbarElement.remove();
-        toolbarElement = null;
+    const transform = ACTIONS[action];
+    if (!transform) return;
+
+    applyTransform(transform);
+    closePanel();
+  });
+
+  document.addEventListener(
+    'mouseup',
+    (e) => {
+      if (panel.contains(e.target)) return;
+      // Defer one tick so the browser has finalized the drag-selection
+      // (and any editor-side selection reconciliation) before we read it.
+      setTimeout(handleSelectionChange, 0);
+      // Also covers a plain click that just places the caret (no drag):
+      // after a short pause, offer the caret-mode symbol popup.
+      scheduleIdleCheck();
+    },
+    true
+  );
+
+  document.addEventListener(
+    'keyup',
+    (e) => {
+      const { active } = getDeepSelectionContext();
+      if (!isTextField(active) && !isEditableElement(active)) return;
+      if (e.shiftKey) {
+        handleSelectionChange();
+        return;
       }
+      // Any other key (typing, arrow navigation): wait for a pause before
+      // offering the caret-mode popup, so it doesn't fight with typing.
+      closePanel();
+      scheduleIdleCheck();
+    },
+    true
+  );
 
-      currentEditor = editor;
-      injectToolbar();
-    } else if (currentEditor && (!toolbarElement || !toolbarElement.isConnected)) {
-      injectToolbar();
-    }
-  }
+  document.addEventListener(
+    'input',
+    () => {
+      closePanel();
+      scheduleIdleCheck();
+    },
+    true
+  );
 
-  function init() {
-    checkAndInject();
-
-    checkInterval = setInterval(() => {
-      checkAndInject();
-    }, 300);
-
-    observer = new MutationObserver(() => {
-      checkAndInject();
-    });
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-
-    document.addEventListener('focusin', (e) => {
-      const target = e.target;
-      if (target && (target.contentEditable === 'true' || target.tagName === 'TEXTAREA')) {
-        setTimeout(checkAndInject, 50);
-      }
-    });
-
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
-  setTimeout(checkAndInject, 1000);
-  setTimeout(checkAndInject, 3000);
-
+  document.addEventListener(
+    'mousedown',
+    (e) => {
+      if (panel.contains(e.target)) return;
+      clearTimeout(idleTimer);
+      closePanel();
+    },
+    true
+  );
+  window.addEventListener('scroll', closePanel, true);
+  window.addEventListener('resize', closePanel);
 })();
